@@ -4,6 +4,15 @@ from models.calculations import calculate_reorder_targets
 from simulation.simulator import simulate_days
 from visualization.plots import create_scenario_plot, get_scenario_metrics
 
+def format_recommendation(reorder_point: float, railcar_capacity: float = 30000) -> str:
+    """Format the recommendation in railcar terms"""
+    railcars = max(1, round(reorder_point / railcar_capacity, 1))
+    return f"""
+    # 🚨 Recommendation
+    ### Place new orders when you have {railcars} or fewer railcars worth of propane
+    #### ({int(reorder_point):,} gallons)
+    """
+
 def main():
     st.set_page_config(page_title="Terminal Inventory Management", layout="wide")
     st.title("Terminal Inventory Management Calculator")
@@ -75,35 +84,60 @@ def main():
     # Calculate targets
     results = calculate_reorder_targets(params)
 
+    # Display the main recommendation prominently
+    st.markdown(format_recommendation(results['reorder_point']))
+    
+    # Add explanation of the recommendation
+    with st.expander("📊 Understanding this recommendation"):
+        st.markdown(f"""
+        This recommendation is based on:
+        - Daily usage: {daily_usage:,} gallons
+        - Lead time: {delivery_mean} days (±{delivery_std} days)
+        - Business priority: {business_case}
+        
+        The reorder point includes:
+        - Lead time demand: {int(results['lead_time_demand']):,} gallons
+        - Safety stock: {int(results['safety_stock']):,} gallons
+        
+        Expected stockouts per year: {results['expected_stockout_days_per_year']} days
+        """)
+
     # Simulation and visualization
-    with col2:
-        st.markdown("### Simulation Results")
-        
-        scenarios = {
-            "Expected Case": "expected",
-            "Best Case": "best_case",
-            "Worst Case": "worst_case"
-        }
-        
-        tabs = st.tabs(list(scenarios.keys()))
-        
-        for tab, (scenario_name, scenario_type) in zip(tabs, scenarios.items()):
-            with tab:
-                sim_data, orders = simulate_days(params, results['reorder_point'], 
-                                              scenario=scenario_type)
-                
-                fig = create_scenario_plot(sim_data, orders, scenario_name)
-                st.plotly_chart(fig, use_container_width=True)
-                
-                metrics = get_scenario_metrics(sim_data, orders)
-                
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("Average Inventory", f"{metrics['average_inventory']:,} gal")
-                with col2:
-                    st.metric("Total Railcars Ordered", f"{metrics['total_railcars']}")
-                with col3:
-                    st.metric("Near Stockouts", f"{metrics['near_stockouts']} days")
+    st.markdown("### Simulation Results")
+    
+    scenarios = {
+        "Expected Case": "expected",
+        "Best Case": "best_case",
+        "Worst Case": "worst_case"
+    }
+    
+    tabs = st.tabs(list(scenarios.keys()))
+    
+    for tab, (scenario_name, scenario_type) in zip(tabs, scenarios.items()):
+        with tab:
+            sim_data, orders = simulate_days(params, results['reorder_point'], 
+                                          scenario=scenario_type)
+            
+            fig = create_scenario_plot(sim_data, orders, scenario_name)
+            st.plotly_chart(fig, use_container_width=True)
+            
+            metrics = get_scenario_metrics(sim_data, orders)
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Average Inventory", 
+                         f"{metrics['average_inventory']:,} gal",
+                         f"{metrics['average_inventory']/30000:.1f} railcars")
+            with col2:
+                st.metric("Total Railcars Ordered", f"{metrics['total_railcars']}")
+            with col3:
+                st.metric("Near Stockouts", f"{metrics['near_stockouts']} days")
+
+            # Add scenario-specific insights
+            if metrics['near_stockouts'] > results['expected_stockout_days_per_year']:
+                st.warning(f"⚠️ This scenario shows more stockouts than expected. Consider increasing safety stock.")
+            if metrics['average_inventory'] > 2 * results['reorder_point']:
+                st.info("💡 Average inventory seems high. Consider more aggressive settings to reduce holding costs.")
 
 if __name__ == "__main__":
     main()
